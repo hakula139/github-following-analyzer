@@ -9,6 +9,53 @@
 use std-rfc/str
 
 # --------------------------------------------------------------------------------------------------
+# Configuration
+# --------------------------------------------------------------------------------------------------
+
+def valid-login [value: any]: nothing -> bool {
+  if ($value | describe) != "string" {
+    false
+  } else {
+    ($value | str length) <= 39 and $value =~ '^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$'
+  }
+}
+
+def load-allow-list [file?: path]: nothing -> list<string> {
+  let selected = ($file | default "config.toml")
+  if not ($selected | path exists --no-symlink) {
+    if $file == null {
+      return []
+    }
+    error make {msg: $"Config ($selected) does not exist."}
+  }
+
+  let config = try {
+    open --raw $selected | into string | from toml
+  } catch {
+    error make {msg: $"Cannot read TOML config ($selected)."}
+  }
+  if not ($config | describe | str starts-with "record") {
+    error make {msg: $"Config ($selected) must contain a TOML root record."}
+  }
+  let unknown = ($config | columns | where {|key| $key != "allow_list" })
+  if ($unknown | is-not-empty) {
+    error make {
+      msg: $"Config ($selected): unknown keys ($unknown | str join ', '). Expected allow_list."
+    }
+  }
+  let allowed = ($config.allow_list? | default [])
+  if not (($allowed | describe) =~ '^(list|table)') {
+    error make {msg: $"Config ($selected): allow_list must be a list of GitHub usernames."}
+  }
+  if ($allowed | any {|login| not (valid-login $login) }) {
+    error make {
+      msg: $"Config ($selected): allow_list entries must be valid GitHub usernames without spaces or @."
+    }
+  }
+  $allowed | str lowercase | uniq
+}
+
+# --------------------------------------------------------------------------------------------------
 # Requests and validation
 # --------------------------------------------------------------------------------------------------
 
@@ -39,14 +86,6 @@ def request [endpoint: string, --pages] {
     $response.stdout | from json
   } catch {
     error make {msg: $"GitHub.com GET ($endpoint) returned invalid JSON."}
-  }
-}
-
-def valid-login [value: any]: nothing -> bool {
-  if ($value | describe) != "string" {
-    false
-  } else {
-    $value =~ '^[A-Za-z0-9][A-Za-z0-9-]*$'
   }
 }
 
@@ -108,7 +147,7 @@ def users [endpoint: string]: nothing -> list {
 # Report
 # --------------------------------------------------------------------------------------------------
 
-def report []: nothing -> record {
+def report [allowed: list<string>]: nothing -> record {
   if (which gh | is-empty) {
     error make {
       msg: (
@@ -129,21 +168,28 @@ def report []: nothing -> record {
     | where {|user| $user.id not-in $follower_ids }
     | sort-by login --ignore-case
   )
+  let actionable = (
+    $unmatched
+    | where {|user| ($user.login | str lowercase) not-in $allowed }
+  )
 
   {
     account: $login
     following_count: ($following | length)
     followers_count: ($followers | length)
-    not_following_back: $unmatched
+    allow_listed_count: (($unmatched | length) - ($actionable | length))
+    not_following_back: $actionable
   }
 }
 
 # List accounts you follow that do not follow you back on GitHub.com. Uses gh credentials.
 def main [
+  --config: path # TOML config, default ./config.toml. An absent default file is optional.
   --json # Emit a complete JSON record on stdout.
 ] {
   let result = try {
-    report
+    let allowed = (load-allow-list $config)
+    report $allowed
   } catch {|err|
     print --stderr $err.msg
     exit 1
@@ -153,13 +199,14 @@ def main [
     $"Account: ($result.account)."
     $"Following: ($result.following_count)."
     $"Followers: ($result.followers_count)."
+    $"Allowed: ($result.allow_listed_count)."
     $"Not following back: ($result.not_following_back | length)."
   ]
   print --stderr ($summary | str join " ")
   if $json {
     print ($result | to json)
   } else if ($result.not_following_back | is-empty) {
-    print "Everyone you follow follows you back."
+    print "No accounts to review."
   } else {
     for user in $result.not_following_back {
       print $"($user.login) ($user.url)"

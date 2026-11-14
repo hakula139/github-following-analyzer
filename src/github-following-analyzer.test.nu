@@ -32,14 +32,223 @@ def responses [following: any, followers: any]: nothing -> record {
   }
 }
 
-def analyze [data: record, --text]: nothing -> record {
-  let flags = if $text { [] } else { ["--json"] }
+def analyze [data: record, --text, --config: path, --cwd: path]: nothing -> record {
+  let output = if $text { [] } else { ["--json"] }
+  let selection = if $config == null { [] } else { ["--config" $config] }
+  let flags = ($output | append $selection)
+  let directory = ($cwd | default { mktemp --directory })
   with-env {
     PATH: ($env.PATH | prepend $env.NU_TEST_STUBS)
     GH_HOST: "example.invalid"
     GFA_RESPONSES: ($data | to json)
   } {
+    cd $directory
     ^$nu.current-exe --no-config-file $SCRIPT ...$flags | complete
+  }
+}
+
+def "test optional config and explicit paths use the working directory" [] {
+  let cases = [
+    {
+      name: "absent default"
+      file: null
+      config: null
+      body: ""
+    }
+    {
+      name: "empty default with missing allow_list"
+      file: "config.toml"
+      config: null
+      body: ""
+    }
+    {
+      name: "default empty allow_list"
+      file: "config.toml"
+      config: null
+      body: "allow_list = []"
+    }
+    {
+      name: "explicit relative path"
+      file: "selected.toml"
+      config: "selected.toml"
+      body: "allow_list = []"
+    }
+  ]
+
+  for case in $cases {
+    let cwd = (mktemp --directory)
+    if $case.file != null {
+      $case.body | save ($cwd | path join $case.file)
+    }
+
+    let actual = (analyze (responses [[]] [[]]) --cwd $cwd --config $case.config)
+    assert equal $actual.exit_code 0 $"($case.name): ($actual.stderr)"
+
+    assert equal ($actual.stdout | from json) {
+      account: "example-account"
+      following_count: 0
+      followers_count: 0
+      allow_listed_count: 0
+      not_following_back: []
+    } $case.name
+  }
+}
+
+def "test invalid config fails before requests without private values" [] {
+  let cases = [
+    {
+      name: "explicit missing default path"
+      file: "config.toml"
+      body: null
+      message: "does not exist"
+    }
+    {
+      name: "explicit missing alternative path"
+      file: "absent.toml"
+      body: null
+      message: "does not exist"
+    }
+    {
+      name: "malformed TOML"
+      file: "invalid.toml"
+      body: 'allow_list = ["private-config-sentinel"'
+      message: "Cannot read TOML config"
+    }
+    {
+      name: "unknown key"
+      file: "invalid.toml"
+      body: 'cache = "private-config-sentinel"'
+      message: "unknown keys cache"
+    }
+    {
+      name: "root scalar"
+      file: "invalid.toml"
+      body: '"private-config-sentinel"'
+      message: "Cannot read TOML config"
+    }
+    {
+      name: "string allow_list"
+      file: "invalid.toml"
+      body: 'allow_list = "private-config-sentinel"'
+      message: "allow_list must be a list"
+    }
+    {
+      name: "record allow_list"
+      file: "invalid.toml"
+      body: 'allow_list = {name = "private-config-sentinel"}'
+      message: "allow_list must be a list"
+    }
+    ...([
+      4
+      ""
+      " alpha"
+      "alpha "
+      "@alpha"
+      "alpha--beta"
+      "alpha-"
+      ("a" | fill --character "a" --width 40)
+      {name: "private-config-sentinel"}
+    ] | each {|value|
+      {
+        name: $"invalid username entry ($value | describe) ($value | to nuon)"
+        file: "invalid.toml"
+        body: ({allow_list: [$value]} | to toml)
+        message: "allow_list entries must be valid GitHub usernames"
+      }
+    })
+  ]
+
+  for case in $cases {
+    let cwd = (mktemp --directory)
+    if $case.body != null {
+      $case.body | save ($cwd | path join $case.file)
+    }
+
+    for text in [false true] {
+      let mode = if $text { "text" } else { "JSON" }
+      let label = $"($case.name), config ($case.file), ($mode) mode"
+
+      let actual = (analyze {} --cwd $cwd --config $case.file --text=$text)
+
+      assert ($actual.exit_code != 0) $label
+      assert equal $actual.stdout "" $label
+      assert ($actual.stderr | str contains $case.file) $label
+      assert ($actual.stderr | str contains $case.message) $label
+      assert (not ($actual.stderr | str contains "private-config-sentinel")) $label
+      assert (not ($actual.stderr | str contains "GitHub.com GET")) $label
+    }
+  }
+}
+
+def "test help bypasses config and gh" [] {
+  let actual = (with-env {PATH: []} {
+    cd $env.TMPDIR
+    ^$nu.current-exe --no-config-file $SCRIPT --config "absent.toml" --help | complete
+  })
+
+  assert equal $actual.exit_code 0 $actual.stderr
+  assert ($actual.stdout | str contains "--config")
+  assert equal $actual.stderr ""
+}
+
+def "test exemptions match current logins and count only nonreciprocal accounts" [] {
+  let alpha = {
+    id: 1
+    login: "Alpha"
+    url: "https://github.com/Alpha"
+  }
+  let zulu = {
+    id: 2
+    login: "Zulu"
+    url: "https://github.com/Zulu"
+  }
+  let data = (responses [
+    [(user 2 "Zulu") (user 3 "old-name")]
+    [(user 1 "Alpha") (user 2 "Zulu")]
+  ] [[(user 3 "new-name") (user 8 "Alpha")]])
+  let cases = [
+    {
+      name: "case insensitive duplicates and reciprocal names"
+      allowed: ["ALPHA" "alpha" "old-name" "unused"]
+      count: 1
+      expected: [$zulu]
+      text: "Zulu https://github.com/Zulu\n"
+    }
+    {
+      name: "all nonreciprocal accounts exempt"
+      allowed: ["alpha" "ZULU"]
+      count: 2
+      expected: []
+      text: "No accounts to review.\n"
+    }
+    {
+      name: "reciprocal and unused names do not count"
+      allowed: ["old-name" "unused"]
+      count: 0
+      expected: [$alpha $zulu]
+      text: "Alpha https://github.com/Alpha\nZulu https://github.com/Zulu\n"
+    }
+  ]
+
+  for case in $cases {
+    let cwd = (mktemp --directory)
+    {allow_list: $case.allowed} | to toml | save ($cwd | path join "config.toml")
+
+    let json = (analyze $data --cwd $cwd)
+    let text = (analyze $data --cwd $cwd --text)
+    assert equal [$json.exit_code $text.exit_code] [0 0] $case.name
+
+    assert equal ($json.stdout | from json) {
+      account: "example-account"
+      following_count: 3
+      followers_count: 2
+      allow_listed_count: $case.count
+      not_following_back: $case.expected
+    } $case.name
+    assert equal $text.stdout $case.text $case.name
+    let summary = $"Account: example-account. Following: 3. Followers: 2. Allowed: ($case.count). Not following back: ($case.expected | length).\n"
+    assert equal $json.stderr $summary $"($case.name): JSON summary"
+    assert equal $text.stderr $summary $"($case.name): text summary"
   }
 }
 
@@ -60,6 +269,7 @@ def "test full pages match stable ids deduplicate and sort logins" [] {
     account: "example-account"
     following_count: 4
     followers_count: 2
+    allow_listed_count: 0
     not_following_back: [
       {
         id: 3
@@ -78,7 +288,7 @@ def "test full pages match stable ids deduplicate and sort logins" [] {
       }
     ]
   }
-  assert equal $actual.stderr "Account: example-account. Following: 4. Followers: 2. Not following back: 3.\n"
+  assert equal $actual.stderr "Account: example-account. Following: 4. Followers: 2. Allowed: 0. Not following back: 3.\n"
 }
 
 def "test text and json keep stdout separate from summary" [] {
@@ -101,7 +311,7 @@ def "test text and json keep stdout separate from summary" [] {
       url: "https://github.com/Zulu"
     }
   ]
-  assert equal $text.stderr "Account: example-account. Following: 2. Followers: 0. Not following back: 2.\n"
+  assert equal $text.stderr "Account: example-account. Following: 2. Followers: 0. Allowed: 0. Not following back: 2.\n"
   assert equal $json.stderr $text.stderr
 }
 
@@ -141,9 +351,10 @@ def "test empty collections and mutual following succeed" [] {
       account: "example-account"
       following_count: $case.following_count
       followers_count: $case.followers_count
+      allow_listed_count: 0
       not_following_back: []
     } $"($case.name): JSON report"
-    assert equal $text.stdout "Everyone you follow follows you back.\n" $"($case.name): text report"
+    assert equal $text.stdout "No accounts to review.\n" $"($case.name): text report"
     assert equal $text.stderr $json.stderr $"($case.name): text and JSON summaries"
   }
 }
@@ -331,6 +542,7 @@ def "test malformed external fields and page shapes abort without payloads" [] {
 
 def "test missing gh gives an actionable error" [] {
   let actual = (with-env {PATH: []} {
+    cd $env.TMPDIR
     ^$nu.current-exe --no-config-file $SCRIPT | complete
   })
 

@@ -5,5 +5,7 @@
 /result-*
 
 # Private results and local plans
+config.toml
+.env.local
 results/
 .agents/plans/
