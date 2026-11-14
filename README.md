@@ -28,7 +28,7 @@ cp config.example.toml config.toml
 The only supported key is `allow_list`, an array of GitHub usernames. For example:
 
 ```toml
-allow_list = ["example-user"]
+allow_list = ["trusted-user"]
 ```
 
 An omitted `allow_list` means an empty list. Names match current logins without regard to case, and duplicates are ignored. Use bare usernames without surrounding spaces or an `@` prefix. Update the allowlist when an allowed account renames.
