@@ -1,0 +1,13 @@
+cachix
+devkit
+direnv
+Hakula
+nixfmt
+nixos
+nixpkgs
+nonpositive
+pkgs
+pname
+shellcheck
+shfmt
+substituters
