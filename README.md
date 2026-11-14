@@ -1,5 +1,8 @@
 # GitHub Following Analyzer
 
+[![CI](https://github.com/hakula139/github-following-analyzer/actions/workflows/ci.yml/badge.svg)](https://github.com/hakula139/github-following-analyzer/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Find accounts you follow that do not follow you back on GitHub.com. The tool uses your current [GitHub CLI](https://cli.github.com/) account, fetches both complete lists, and compares stable user IDs so renamed accounts still match. It only reads GitHub data.
 
 ## Usage
