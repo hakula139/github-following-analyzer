@@ -20,8 +20,8 @@ nix run . -- --json
 Or, with Nushell 0.116 or later and `gh` on `PATH`, run the source:
 
 ```sh
-nu src/github-following-analyzer.nu
-nu src/github-following-analyzer.nu --json
+./src/github-following-analyzer.nu
+./src/github-following-analyzer.nu --json
 ```
 
 All requests explicitly target GitHub.com, including when `GH_HOST` names another host. The account is identified once, and both lists are fetched using that login. Authentication and pagination are handled by `gh`.
