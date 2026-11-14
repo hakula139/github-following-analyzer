@@ -58,6 +58,7 @@
             prettier.enable = true;
             shellcheck.enable = true;
             shfmt.enable = true;
+            taplo.enable = true;
           };
         };
       in

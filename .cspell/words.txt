@@ -15,4 +15,5 @@ pname
 shellcheck
 shfmt
 substituters
+taplo
 worktree
