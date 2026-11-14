@@ -159,7 +159,7 @@ def "test gh failures reject misleading stdout and partial pages" [] {
     {
       endpoint: "users/example-account/following?per_page=100"
       stdout: $partial
-      diagnostic: "gh: page 2 failed (HTTP 403)"
+      diagnostic: "gh: page 2 failed (HTTP 403)\nretry after the rate limit resets"
     }
     {
       endpoint: "users/example-account/followers?per_page=100"
@@ -178,14 +178,18 @@ def "test gh failures reject misleading stdout and partial pages" [] {
     for text in [false true] {
       let mode = if $text { "text" } else { "JSON" }
       let label = $"GET ($case.endpoint), ($mode) mode"
+      let expected = [
+        $"GitHub.com GET ($case.endpoint) failed."
+        "Check `gh auth login --hostname github.com` and the gh diagnostic:"
+        ($case.diagnostic | str trim)
+        ""
+      ]
 
       let actual = (analyze $data --text=$text)
 
       assert ($actual.exit_code != 0) $label
       assert equal $actual.stdout "" $label
-      assert ($actual.stderr | str contains $case.endpoint) $label
-      assert ($actual.stderr | str contains $case.diagnostic) $label
-      assert (not ($actual.stderr | str contains "Not following back:")) $label
+      assert equal $actual.stderr ($expected | str join "\n") $label
     }
   }
 }
@@ -332,6 +336,12 @@ def "test missing gh gives an actionable error" [] {
 
   assert ($actual.exit_code != 0)
   assert equal $actual.stdout ""
-  assert ($actual.stderr | str contains "Install gh")
-  assert ($actual.stderr | str contains "gh auth login --hostname github.com")
+  assert equal $actual.stderr (
+    [
+      "GitHub CLI (gh) is required."
+      "Install gh, then run `gh auth login --hostname github.com`."
+      ""
+    ]
+    | str join "\n"
+  )
 }

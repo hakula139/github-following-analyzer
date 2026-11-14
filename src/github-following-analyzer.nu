@@ -6,6 +6,8 @@
 # Read-only following-minus-followers report for the current GitHub.com account.
 # ==================================================================================================
 
+use std-rfc/str
+
 # --------------------------------------------------------------------------------------------------
 # Requests and validation
 # --------------------------------------------------------------------------------------------------
@@ -21,7 +23,16 @@ def request [endpoint: string, --pages] {
     | complete
   )
   if $response.exit_code != 0 {
-    error make {msg: $"GitHub.com GET ($endpoint) failed. Check `gh auth login --hostname github.com` and the gh diagnostic:\n($response.stderr | str trim)"}
+    let intro = (
+      $"
+      GitHub.com GET ($endpoint) failed.
+      Check `gh auth login --hostname github.com` and the gh diagnostic:
+      "
+      | str dedent
+    )
+    error make {
+      msg: ([$intro ($response.stderr | str trim)] | str join "\n")
+    }
   }
 
   try {
@@ -59,17 +70,23 @@ def users [endpoint: string]: nothing -> list {
   mut rows = []
   for page in $pages {
     if not (($page | describe) =~ '^(list|table)') {
-      error make {msg: $"GitHub.com GET ($endpoint) returned an invalid users page."}
+      error make {
+        msg: $"GitHub.com GET ($endpoint) returned an invalid users page."
+      }
     }
     for user in $page {
       if not ($user | describe | str starts-with "record") {
-        error make {msg: $"GitHub.com GET ($endpoint) returned an invalid user record."}
+        error make {
+          msg: $"GitHub.com GET ($endpoint) returned an invalid user record."
+        }
       }
       if ($user.id? | describe) != "int" {
         error make {msg: $"GitHub.com GET ($endpoint) returned an invalid user ID."}
       }
       if $user.id <= 0 or not (valid-login $user.login?) {
-        error make {msg: $"GitHub.com GET ($endpoint) returned an invalid user ID or login."}
+        error make {
+          msg: $"GitHub.com GET ($endpoint) returned an invalid user ID or login."
+        }
       }
       if ($user.html_url? | describe) != "string" {
         error make {msg: $"GitHub.com GET ($endpoint) returned an invalid user URL."}
@@ -93,7 +110,15 @@ def users [endpoint: string]: nothing -> list {
 
 def report []: nothing -> record {
   if (which gh | is-empty) {
-    error make {msg: "GitHub CLI (gh) is required. Install gh, then run `gh auth login --hostname github.com`."}
+    error make {
+      msg: (
+        "
+        GitHub CLI (gh) is required.
+        Install gh, then run `gh auth login --hostname github.com`.
+        "
+        | str dedent
+      )
+    }
   }
   let login = (account-login (request "user"))
   let following = (users $"users/($login)/following?per_page=100")
@@ -124,7 +149,13 @@ def main [
     exit 1
   }
 
-  print --stderr $"Account: ($result.account). Following: ($result.following_count). Followers: ($result.followers_count). Not following back: ($result.not_following_back | length)."
+  let summary = [
+    $"Account: ($result.account)."
+    $"Following: ($result.following_count)."
+    $"Followers: ($result.followers_count)."
+    $"Not following back: ($result.not_following_back | length)."
+  ]
+  print --stderr ($summary | str join " ")
   if $json {
     print ($result | to json)
   } else if ($result.not_following_back | is-empty) {
