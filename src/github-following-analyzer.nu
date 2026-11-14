@@ -74,7 +74,7 @@ def users [endpoint: string]: nothing -> list {
       if ($user.html_url? | describe) != "string" {
         error make {msg: $"GitHub.com GET ($endpoint) returned an invalid user URL."}
       }
-      if $user.html_url !~ '^https://github.com/[A-Za-z0-9][A-Za-z0-9-]*$' {
+      if $user.html_url !~ '^https://github\.com/[A-Za-z0-9][A-Za-z0-9-]*$' {
         error make {msg: $"GitHub.com GET ($endpoint) returned an invalid user URL."}
       }
       $rows = ($rows | append {

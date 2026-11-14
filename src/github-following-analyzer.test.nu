@@ -225,6 +225,10 @@ def "test malformed external fields and page shapes abort without payloads" [] {
       body: [[(user 1 "alpha" | update html_url "https://example.com/private-payload-sentinel")]]
     }
     {
+      name: "lookalike GitHub.com domain"
+      body: [[(user 1 "alpha" | update html_url "https://githubXcom/alpha")]]
+    }
+    {
       name: "record in place of users page"
       body: [{message: "private-payload-sentinel"}]
     }
